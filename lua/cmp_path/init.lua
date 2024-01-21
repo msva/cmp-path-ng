@@ -119,6 +119,20 @@ source._candidates = function(_, dirname, include_hidden, option, callback)
     return callback(err, nil)
   end
 
+  local work
+  work = assert(vim.loop.new_work(function(fs, dir_name, label_trailing_slash, trailing_slash, file_kind, folder_kind)
+  local dirname = dir_name
+  local cmp = cmp or {}
+  cmp.lsp = cmp.lsp or {}
+  cmp.lsp.CompletionItemKind = cmp.lsp.CompletionItemKind or {
+    File = file_kind,
+    Folder = folder_kind,
+  }
+  local option = {
+      label_trailing_slash = label_trailing_slash,
+      trailing_slash = trailing_slash,
+    }
+
   local items = {}
 
   local function create_item(name, fs_type)
@@ -128,12 +142,16 @@ source._candidates = function(_, dirname, include_hidden, option, callback)
 
     local path = dirname .. '/' .. name
     local stat = vim.loop.fs_stat(path)
+    --^ assert
+
     local lstat = nil
     if stat then
       fs_type = stat.type
     elseif fs_type == 'link' then
       -- Broken symlink
       lstat = vim.loop.fs_lstat(dirname)
+      --^ assert
+
       if not lstat then
         return
       end
@@ -165,13 +183,16 @@ source._candidates = function(_, dirname, include_hidden, option, callback)
         item.word = name
       end
     end
+
     table.insert(items, item)
   end
 
   while true do
     local name, fs_type, e = vim.loop.fs_scandir_next(fs)
+    -- ^ assert
     if e then
       return callback(fs_type, nil)
+      -- return fs_type, ""
     end
     if not name then
       break
@@ -179,7 +200,27 @@ source._candidates = function(_, dirname, include_hidden, option, callback)
     create_item(name, fs_type)
   end
 
+  return nil, require'utils.luatexts'.save(items)
+end, function(worker_error, serialized_items)
+  if worker_error then
+    callback(err, nil)
+    return
+  end
+  local read_ok, items = require'utils.luatexts'.load(serialized_items)
+  if not read_ok then
+    callback("Problem de-serializing file entries", nil)
+  end
   callback(nil, items)
+end))
+
+work:queue(
+  fs,
+  dirname,
+  option.label_trailing_slash,
+  option.trailing_slash,
+  cmp.lsp.CompletionItemKind.File,
+  cmp.lsp.CompletionItemKind.Folder
+)
 end
 
 source._is_slash_comment = function(_)
